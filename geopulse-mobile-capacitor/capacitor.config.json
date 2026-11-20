@@ -1,0 +1,8 @@
+{
+  "appId": "com.geopulse.newsmap",
+  "appName": "GeoPulse News Map",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

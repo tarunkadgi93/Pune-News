@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>GeoPulse — Location-Tagged News Map</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #e2e8f0;
+      overflow: hidden;
+    }
+    #app-shell {
+      width: 100%;
+      height: 100vh;
+      margin: 0 auto;
+      position: relative;
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: max-width 0.25s ease, border-radius 0.25s ease, box-shadow 0.25s ease, height 0.25s ease;
+    }
+    #app-shell.mobile-frame {
+      max-width: 430px;
+      height: calc(100vh - 24px);
+      margin-top: 12px;
+      border-radius: 28px;
+      box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35), 0 0 0 8px #0f172a;
+    }
+    #map-wrapper {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 64px);
+      min-height: 460px;
+      flex: 1 1 auto;
+    }
+    #app-shell.mobile-frame #map-wrapper {
+      height: calc(100vh - 88px);
+    }
+    #map, #gmap {
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* Custom News Pin */
+    .news-pin-wrapper {
+      background: transparent;
+      border: none;
+    }
+    .news-pin {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.35);
+      border: 2.5px solid #ffffff;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+    }
+    .news-pin-inner {
+      transform: rotate(45deg);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .news-pin.active {
+      transform: rotate(-45deg) scale(1.24);
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.45);
+      z-index: 999 !important;
+    }
+    .pin-pulse {
+      position: absolute;
+      inset: -8px;
+      border-radius: 50%;
+      border: 3px solid currentColor;
+      opacity: 0;
+      animation: pinPulse 1.8s infinite ease-out;
+      pointer-events: none;
+    }
+    @keyframes pinPulse {
+      0% { transform: scale(0.75); opacity: 0.75; }
+      100% { transform: scale(1.65); opacity: 0; }
+    }
+    .leaflet-control-attribution {
+      font-size: 9px !important;
+      background: rgba(255, 255, 255, 0.75) !important;
+      padding: 1px 5px !important;
+      border-radius: 4px;
+      margin-bottom: 4px !important;
+    }
+    .sheet-transition {
+      transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+    }
+  </style>
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+</head>
+<body>
+  <div id="app-shell">
+    <!-- TOP FLOATING SEARCH & CATEGORY BAR (Visible on Map Tab) -->
+    <header id="map-overlay-header" class="absolute top-0 left-0 right-0 z-[500] px-3 pt-3 pointer-events-none">
+      <!-- Search Pill -->
+      <div class="pointer-events-auto max-w-xl mx-auto bg-white/95 backdrop-blur-md rounded-full shadow-lg border border-slate-200/80 flex items-center px-3.5 py-2 gap-2.5">
+        <div class="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+          <i data-lucide="map-pin" class="w-4 h-4"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <input
+            id="search-input"
+            type="text"
+            placeholder="Search Pune news, areas, topics..."
+            class="w-full bg-transparent text-sm text-slate-800 placeholder-slate-400 focus:outline-none"
+            autocomplete="off"
+          />
+        </div>
+        <button id="clear-search-btn" type="button" class="hidden p-1.5 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100" aria-label="Clear search">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+        <span id="pin-count-badge" class="shrink-0 text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-100 px-2.5 py-1 rounded-full">
+          8 pins
+        </span>
+      </div>
+
+      <!-- Category Chips Row -->
+      <div id="category-chips" class="pointer-events-auto max-w-3xl mx-auto mt-2.5 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <!-- Populated dynamically -->
+      </div>
+
+      <!-- Location Picking Mode Banner -->
+      <div id="pick-mode-banner" class="hidden pointer-events-auto max-w-xl mx-auto mt-2 bg-slate-900 text-white rounded-2xl px-4 py-2.5 shadow-xl flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+          <span class="text-xs font-medium truncate">Tap anywhere on the map to set news location</span>
+        </div>
+        <button id="cancel-pick-btn" type="button" class="text-xs font-semibold text-amber-300 hover:text-amber-200 shrink-0 px-2 py-1 rounded-lg bg-white/10">
+          Cancel
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="relative flex-1 w-full overflow-hidden">
+      <!-- TAB 1: MAP VIEW -->
+      <section id="view-map" class="w-full h-full relative">
+        <div id="map-wrapper">
+          <div id="map"></div>
+        </div>
+
+        <!-- Floating Right Controls -->
+        <div id="map-fab-stack" class="absolute right-3 top-36 z-[450] flex flex-col gap-2.5">
+          <button id="btn-layers" type="button" title="Switch Map Layer" class="w-11 h-11 rounded-full bg-white text-slate-700 shadow-md border border-slate-200 flex items-center justify-center hover:bg-slate-50 active:scale-95 transition">
+            <i data-lucide="layers" class="w-5 h-5"></i>
+          </button>
+          <button id="btn-radius" type="button" title="Filter by Radius from Pune Center" class="w-11 h-11 rounded-full bg-white text-slate-700 shadow-md border border-slate-200 flex flex-col items-center justify-center hover:bg-slate-50 active:scale-95 transition">
+            <i data-lucide="radar" class="w-4 h-4"></i>
+            <span id="radius-fab-label" class="text-[9px] font-bold leading-none mt-0.5 text-blue-600">All</span>
+          </button>
+          <button id="btn-recenter" type="button" title="Recenter on Pune" class="w-11 h-11 rounded-full bg-white text-slate-700 shadow-md border border-slate-200 flex items-center justify-center hover:bg-slate-50 active:scale-95 transition">
+            <i data-lucide="crosshair" class="w-5 h-5"></i>
+          </button>
+          <button id="btn-open-add" type="button" title="Pin Local News" class="w-11 h-11 rounded-full bg-blue-600 text-white shadow-lg flex items-center justify-center hover:bg-blue-700 active:scale-95 transition">
+            <i data-lucide="plus" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- Layer Quick Picker Popover -->
+        <div id="layer-popover" class="hidden absolute right-16 top-36 z-[500] bg-white rounded-2xl shadow-xl border border-slate-200 p-2 w-44">
+          <div class="text-[11px] font-semibold text-slate-500 px-2 py-1 uppercase tracking-wider">Map Style</div>
+          <button data-layer="street" type="button" class="layer-opt w-full text-left px-2.5 py-2 rounded-xl text-xs font-medium flex items-center justify-between hover:bg-slate-100">
+            <span class="flex items-center gap-2"><i data-lucide="map" class="w-3.5 h-3.5 text-blue-600"></i>Street Map</span>
+            <span class="layer-check text-blue-600 font-bold">✓</span>
+          </button>
+          <button data-layer="satellite" type="button" class="layer-opt w-full text-left px-2.5 py-2 rounded-xl text-xs font-medium flex items-center justify-between hover:bg-slate-100">
+            <span class="flex items-center gap-2"><i data-lucide="globe" class="w-3.5 h-3.5 text-emerald-600"></i>Satellite</span>
+            <span class="layer-check hidden text-blue-600 font-bold">✓</span>
+          </button>
+          <button data-layer="topo" type="button" class="layer-opt w-full text-left px-2.5 py-2 rounded-xl text-xs font-medium flex items-center justify-between hover:bg-slate-100">
+            <span class="flex items-center gap-2"><i data-lucide="mountain" class="w-3.5 h-3.5 text-amber-600"></i>Terrain</span>
+            <span class="layer-check hidden text-blue-600 font-bold">✓</span>
+          </button>
+        </div>
+
+        <!-- Bottom Story Carousel (Visible when no article detail sheet is open) -->
+        <div id="bottom-carousel-wrap" class="absolute bottom-3 left-0 right-0 z-[450] px-3 pointer-events-none">
+          <div id="bottom-carousel" class="pointer-events-auto flex gap-3 overflow-x-auto no-scrollbar pb-1 snap-x snap-mandatory">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Selected Article Detail Bottom Sheet -->
+        <div id="article-sheet" class="sheet-transition translate-y-full opacity-0 pointer-events-none absolute bottom-0 left-0 right-0 z-[520] px-2 pb-2 sm:px-4 sm:pb-3">
+          <div class="max-w-xl mx-auto bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden pointer-events-auto">
+            <div class="flex items-center justify-center pt-2.5 pb-1">
+              <div class="w-10 h-1 rounded-full bg-slate-300"></div>
+            </div>
+            <div id="article-sheet-body" class="px-5 pb-5 pt-1 max-h-[62vh] overflow-y-auto">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: NEWS FEED LIST VIEW -->
+      <section id="view-feed" class="hidden w-full h-full bg-slate-50 flex flex-col">
+        <div class="bg-white border-b border-slate-200 px-4 pt-4 pb-3 shrink-0">
+          <div class="max-w-2xl mx-auto">
+            <div class="flex items-center justify-between gap-2">
+              <div>
+                <h1 class="text-lg font-bold text-slate-900">Pune Local News Feed</h1>
+                <p id="feed-subtitle" class="text-xs text-slate-500">Location-tagged stories across Pune</p>
+              </div>
+              <select id="feed-sort" class="text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="latest">Sort: Latest</option>
+                <option value="nearest">Sort: Nearest to Center</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="feed-list" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 max-w-2xl w-full mx-auto pb-6">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- TAB 3: SAVED / BOOKMARKED VIEW -->
+      <section id="view-saved" class="hidden w-full h-full bg-slate-50 flex flex-col">
+        <div class="bg-white border-b border-slate-200 px-4 pt-4 pb-3 shrink-0">
+          <div class="max-w-2xl mx-auto flex items-center justify-between">
+            <div>
+              <h1 class="text-lg font-bold text-slate-900">Saved Stories</h1>
+              <p class="text-xs text-slate-500">Bookmarked location-tagged news</p>
+            </div>
+            <button id="btn-clear-saved" type="button" class="text-xs font-semibold text-rose-600 hover:text-rose-700 px-3 py-1.5 rounded-xl bg-rose-50 hidden">
+              Clear All
+            </button>
+          </div>
+        </div>
+        <div id="saved-list" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 max-w-2xl w-full mx-auto pb-6">
+          <!-- Populated dynamically -->
+        </div>
+      </section>
+
+      <!-- TAB 4: SETTINGS & GOOGLE MAPS CONFIG VIEW -->
+      <section id="view-settings" class="hidden w-full h-full bg-slate-50 flex flex-col overflow-y-auto">
+        <div class="bg-white border-b border-slate-200 px-4 pt-4 pb-3 shrink-0">
+          <div class="max-w-2xl mx-auto">
+            <h1 class="text-lg font-bold text-slate-900">Map &amp; App Settings</h1>
+            <p class="text-xs text-slate-500">Customize map layers, radius filter, and display mode</p>
+          </div>
+        </div>
+        <div class="max-w-2xl w-full mx-auto px-4 py-4 space-y-4 pb-8">
+          <!-- Preview Mode Card -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <h2 class="text-sm font-semibold text-slate-900">Mobile Phone Frame Mode</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Preview as a centered 430px phone screen on desktop</p>
+              </div>
+              <button id="toggle-frame-btn" type="button" role="switch" aria-checked="false" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full bg-slate-200 transition-colors">
+                <span id="toggle-frame-knob" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition translate-x-0.5 mt-0.5"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Map Style Selector -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <h2 class="text-sm font-semibold text-slate-900 mb-2.5">Default Basemap Layer</h2>
+            <div class="grid grid-cols-3 gap-2">
+              <button data-setting-layer="street" type="button" class="setting-layer-btn py-2.5 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition">
+                <i data-lucide="map" class="w-4 h-4"></i>
+                Street
+              </button>
+              <button data-setting-layer="satellite" type="button" class="setting-layer-btn py-2.5 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition">
+                <i data-lucide="globe" class="w-4 h-4"></i>
+                Satellite
+              </button>
+              <button data-setting-layer="topo" type="button" class="setting-layer-btn py-2.5 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition">
+                <i data-lucide="mountain" class="w-4 h-4"></i>
+                Terrain
+              </button>
+            </div>
+          </div>
+
+          <!-- Radius Filter Card -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <h2 class="text-sm font-semibold text-slate-900 mb-1">Distance Radius from Pune Center</h2>
+            <p class="text-xs text-slate-500 mb-3">Filter news pins within a geographic radius of Shivajinagar (18.5211, 73.8553)</p>
+            <div class="grid grid-cols-4 gap-2">
+              <button data-radius="0" type="button" class="radius-opt-btn py-2 rounded-xl border text-xs font-semibold transition">All</button>
+              <button data-radius="5" type="button" class="radius-opt-btn py-2 rounded-xl border text-xs font-semibold transition">5 km</button>
+              <button data-radius="10" type="button" class="radius-opt-btn py-2 rounded-xl border text-xs font-semibold transition">10 km</button>
+              <button data-radius="20" type="button" class="radius-opt-btn py-2 rounded-xl border text-xs font-semibold transition">20 km</button>
+            </div>
+          </div>
+
+          <!-- Data & Export Card -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+            <div class="flex items-center justify-between mb-1">
+              <h2 class="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <i data-lucide="database" class="w-4 h-4 text-blue-600"></i>
+                Pinned News Data
+              </h2>
+              <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Live Interactive Map
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 mb-3">
+              Every news pin includes direct Google Maps directions. Copy all currently pinned stories as GeoJSON or reset to the default Pune feed.
+            </p>
+            <div class="flex gap-2">
+              <button id="btn-export-geojson" type="button" class="flex-1 px-3 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition flex items-center justify-center gap-1.5">
+                <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                Copy GeoJSON
+              </button>
+              <button id="btn-reset-demo" type="button" class="px-3 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition">
+                Reset Feed
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- BOTTOM NAVIGATION BAR (Mobile App Style) -->
+    <nav class="h-16 bg-white border-t border-slate-200 shrink-0 z-[550] px-2">
+      <div class="max-w-xl mx-auto h-full grid grid-cols-4 items-center">
+        <button data-tab="map" type="button" class="nav-tab-btn flex flex-col items-center justify-center gap-1 py-1.5 text-blue-600 font-semibold">
+          <i data-lucide="map-pinned" class="w-5 h-5"></i>
+          <span class="text-[11px]">Explore</span>
+        </button>
+        <button data-tab="feed" type="button" class="nav-tab-btn flex flex-col items-center justify-center gap-1 py-1.5 text-slate-500 font-medium">
+          <i data-lucide="newspaper" class="w-5 h-5"></i>
+          <span class="text-[11px]">Feed</span>
+        </button>
+        <button data-tab="saved" type="button" class="nav-tab-btn relative flex flex-col items-center justify-center gap-1 py-1.5 text-slate-500 font-medium">
+          <div class="relative">
+            <i data-lucide="bookmark" class="w-5 h-5"></i>
+            <span id="saved-nav-badge" class="hidden absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center">0</span>
+          </div>
+          <span class="text-[11px]">Saved</span>
+        </button>
+        <button data-tab="settings" type="button" class="nav-tab-btn flex flex-col items-center justify-center gap-1 py-1.5 text-slate-500 font-medium">
+          <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+          <span class="text-[11px]">Settings</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ADD / PIN LOCAL NEWS MODAL -->
+    <div id="add-news-modal" class="hidden absolute inset-0 z-[600] bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center p-3">
+      <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
+              <i data-lucide="pin" class="w-4 h-4"></i>
+            </div>
+            <h2 class="text-base font-bold text-slate-900">Pin Location-Tagged News</h2>
+          </div>
+          <button id="close-add-modal" type="button" class="p-1.5 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <form id="add-news-form" class="p-5 space-y-3.5 max-h-[75vh] overflow-y-auto">
+          <div>
+            <label for="new-title" class="block text-xs font-semibold text-slate-700 mb-1">Headline</label>
+            <input id="new-title" type="text" required maxlength="120" placeholder="e.g., Traffic diversion near FC Road for evening rally" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="new-location" class="block text-xs font-semibold text-slate-700 mb-1">Neighborhood / Place</label>
+              <input id="new-location" type="text" required maxlength="60" placeholder="e.g., Deccan Gymkhana" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label for="new-category" class="block text-xs font-semibold text-slate-700 mb-1">Category</label>
+              <select id="new-category" class="w-full text-sm px-3 py-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="Community">Community</option>
+                <option value="Transit">Transit</option>
+                <option value="Infrastructure">Infrastructure</option>
+                <option value="Civic">Civic</option>
+                <option value="Culture">Culture</option>
+                <option value="Weather">Weather</option>
+                <option value="Aviation">Aviation</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-xs font-semibold text-slate-700">GPS Coordinates</label>
+              <button id="btn-pick-on-map" type="button" class="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5"></i>
+                Tap Map to Pick
+              </button>
+            </div>
+            <div class="grid grid-cols-2 gap-2.5">
+              <input id="new-lat" type="number" step="0.0001" required value="18.5211" class="w-full text-xs font-mono px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input id="new-lng" type="number" step="0.0001" required value="73.8553" class="w-full text-xs font-mono px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label for="new-summary" class="block text-xs font-semibold text-slate-700 mb-1">Short Summary</label>
+            <textarea id="new-summary" rows="3" required maxlength="320" placeholder="Add verified local details, timings, or impact..." class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+          </div>
+          <div class="pt-1 flex gap-2.5">
+            <button id="cancel-add-modal" type="button" class="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button type="submit" class="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 shadow-sm">
+              Publish Pin
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- TOAST NOTIFICATION -->
+    <div id="toast" class="pointer-events-none opacity-0 translate-y-2 transition-all duration-200 fixed bottom-20 left-1/2 -translate-x-1/2 z-[700] bg-slate-900 text-white text-xs font-medium px-4 py-2.5 rounded-full shadow-xl whitespace-nowrap">
+      Action completed
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const PUNE_CENTER = { lat: 18.5211, lng: 73.8553 };
+
+      const CATEGORY_META = {
+        All:            { color: '#2563eb', bg: 'bg-blue-600',    soft: 'bg-blue-50 text-blue-700 border-blue-200',       icon: 'sparkles' },
+        Transit:        { color: '#7c3aed', bg: 'bg-violet-600',  soft: 'bg-violet-50 text-violet-700 border-violet-200', icon: 'train-front' },
+        Infrastructure: { color: '#ea580c', bg: 'bg-orange-600',  soft: 'bg-orange-50 text-orange-700 border-orange-200', icon: 'hard-hat' },
+        Aviation:       { color: '#0284c7', bg: 'bg-sky-600',     soft: 'bg-sky-50 text-sky-700 border-sky-200',          icon: 'plane' },
+        Civic:          { color: '#059669', bg: 'bg-emerald-600', soft: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: 'landmark' },
+        Culture:        { color: '#db2777', bg: 'bg-pink-600',    soft: 'bg-pink-50 text-pink-700 border-pink-200',       icon: 'flame' },
+        Weather:        { color: '#d97706', bg: 'bg-amber-600',   soft: 'bg-amber-50 text-amber-700 border-amber-200',    icon: 'sun' },
+        Community:      { color: '#0d9488', bg: 'bg-teal-600',    soft: 'bg-teal-50 text-teal-700 border-teal-200',       icon: 'users' }
+      };
+
+      const INITIAL_ARTICLES = [
+        {
+          id: 'n1',
+          title: 'Pune Metro Pink Line: 2 More Stations in Baner Set to Open in December 2026',
+          location: 'Baner, Pune',
+          lat: 18.5600,
+          lng: 73.7903,
+          category: 'Transit',
+          date: 'Nov 19, 2026',
+          timestamp: 20261119,
+          sourceName: 'Magicbricks News',
+          sourceUrl: 'https://www.magicbricks.com/news/mr/pune-metro-pink-line---2-more-stations-in-baner-to-open-in-december-2026-kamb/152911.html',
+          summary: 'Two additional stations along the Baner stretch of Pune Metro Line 3 (the 23.2 km Hinjawadi–Shivajinagar Pink Line corridor with 23 stations) are scheduled to open in December 2026.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n2',
+          title: 'Rs 426 Crore Approved for Hinjewadi IT Park Infra; Six Key Roads Set for December Works',
+          location: 'Hinjewadi IT Park',
+          lat: 18.5936,
+          lng: 73.7301,
+          category: 'Infrastructure',
+          date: 'Nov 3, 2026',
+          timestamp: 20261103,
+          sourceName: 'The Indian Express',
+          sourceUrl: 'https://indianexpress.com/article/cities/pune/techies-residents-protest-again-poor-infra-hinjawadi-it-hub-10866377/',
+          summary: 'Following protests by over 5,000 IT professionals and residents, District Collector Jitendra Dudi confirmed Rs 426 crore approved for roads, pathways, storm-water drains, and Metro last-mile links, with six Hinjewadi–Maan–Marunji road works slated for December.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n3',
+          title: 'Pune Airport to Enforce Rs 500 Fine for Vehicles Staying Over 15 Minutes from December',
+          location: 'Pune International Airport, Lohegaon',
+          lat: 18.5821,
+          lng: 73.9197,
+          category: 'Aviation',
+          date: 'Nov 10, 2026',
+          timestamp: 20261110,
+          sourceName: 'Indian Eagle',
+          sourceUrl: 'https://www.indianeagle.com/traveldiary/pune-airport-new-15-minute-rule-500-fine-parking/',
+          summary: 'To ease terminal congestion, Pune Airport is running a November 2026 warning period before enforcing a Rs 500 fine starting December 2026 for pickup and drop-off vehicles staying beyond 15 minutes inside airport premises.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n4',
+          title: 'Geotechnical Work Moves Pune Metro Ramwadi–Wagholi Extension Forward',
+          location: 'Wagholi / Ahmednagar Road',
+          lat: 18.5806,
+          lng: 73.9833,
+          category: 'Transit',
+          date: 'Nov 1, 2026',
+          timestamp: 20261101,
+          sourceName: 'Metro Rail News',
+          sourceUrl: 'https://metrorailnews.in/pune-metros-ramwadi-wagholi-secion-work/',
+          summary: 'Pre-construction geotechnical activities have begun on the Line 2 eastern extension from Ramwadi through Viman Nagar and Kharadi IT hubs to Wagholi along Ahmednagar Road.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n5',
+          title: 'Pune Metro Phase 2: Swargate–Katraj Underground Line & Cross-City Corridors Advance',
+          location: 'Swargate Metro Hub',
+          lat: 18.4996,
+          lng: 73.8577,
+          category: 'Transit',
+          date: 'Nov 1, 2026',
+          timestamp: 20261101,
+          sourceName: 'Mahindra Lifespaces / MahaMetro Update',
+          sourceUrl: 'https://www.mahindralifespaces.com/blog/pune-metro-phase-2-status-approved-corridors-real-estate/',
+          summary: 'State-approved Phase 2 extensions spanning 80+ km include the underground Swargate–Katraj southern corridor (Market Yard, Padmavati, Bibwewadi, Katraj) and the Khadakwasla–Kharadi cross-city line via Swargate.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n6',
+          title: 'PMC Continues Anti-Encroachment Drive & Reviews River Rejuvenation Projects',
+          location: 'Shivajinagar (PMC HQ)',
+          lat: 18.5211,
+          lng: 73.8553,
+          category: 'Civic',
+          date: 'Nov 20, 2026',
+          timestamp: 20261120,
+          sourceName: 'Pune Municipal Corporation',
+          sourceUrl: 'https://www.pmc.gov.in/en/news/pune-municipal-corporation-police-ready-ganesh-festival-immersion',
+          summary: 'PMC Encroachment Department continued citywide action on Nov 20 alongside a Nov 19 review of water conservation and river rejuvenation projects with Union Jal Shakti Minister C. R. Patil, plus accelerated Katraj–Kondhwa road work.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n7',
+          title: 'Tulsi Vivah, Tripurari Purnima & Annakot Schedule Announced at Dagdusheth Ganpati Temple',
+          location: 'Budhwar Peth, Old Pune',
+          lat: 18.5164,
+          lng: 73.8561,
+          category: 'Culture',
+          date: 'Nov 20, 2026',
+          timestamp: 20261120,
+          sourceName: 'Shrimant Dagdusheth Halwai Ganpati Temple',
+          sourceUrl: 'https://www.dagdushethganpati.com/',
+          summary: 'Late-November celebrations include Tulsi Vivah on Saturday, Nov 21, Tripurari Purnima & Annakot on Tuesday, Nov 24, Sankashti Chaturthi on Nov 27 (moonrise 8:48 PM), and Diwali Kakada on Nov 28.',
+          isUserSubmitted: false
+        },
+        {
+          id: 'n8',
+          title: 'Sunny, Warm Days Forecast Across Pune with Minimal Rain Chance Through Late November',
+          location: 'Koregaon Park, Pune',
+          lat: 18.5377,
+          lng: 73.8930,
+          category: 'Weather',
+          date: 'Nov 20, 2026',
+          timestamp: 20261120,
+          sourceName: 'The Weather Channel',
+          sourceUrl: 'https://weather.com/en-IN/in/maharashtra/city/pune/tenday',
+          summary: 'Pune 10-day forecast calls for mostly sunny to partly cloudy skies with mild lows of 62–68°F (17–20°C), warm afternoons near 87–91°F (31–33°C), and 0–4% precipitation chance.',
+          isUserSubmitted: false
+        }
+      ];
+
+      const TILE_LAYERS = {
+        street: {
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+          attribution: 'Tiles &copy; Esri'
+        },
+        satellite: {
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          attribution: 'Tiles &copy; Esri World Imagery'
+        },
+        topo: {
+          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+          attribution: 'Tiles &copy; Esri World Topo'
+        }
+      };
+
+      const state = {
+        articles: [...INITIAL_ARTICLES],
+        activeCategory: 'All',
+        searchQuery: '',
+        radiusKm: 0,
+        selectedArticleId: null,
+        savedIds: new Set(),
+        activeTab: 'map',
+        mapLayer: 'street',
+        feedSort: 'latest',
+        isPickingLocation: false,
+        mobileFrame: false
+      };
+
+      // Load persisted bookmarks safely
+      try {
+        const rawSaved = localStorage.getItem('geopulse_saved_ids');
+        if (rawSaved) {
+          JSON.parse(rawSaved).forEach(id => state.savedIds.add(id));
+        }
+      } catch (e) {}
+
+      function persistSaved() {
+        try {
+          localStorage.setItem('geopulse_saved_ids', JSON.stringify(Array.from(state.savedIds)));
+        } catch (e) {}
+      }
+
+      // Haversine distance in km
+      function distanceKm(lat1, lng1, lat2, lng2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLng = (lng2 - lng1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      // Toast helper
+      let toastTimer = null;
+      function showToast(msg) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.classList.remove('opacity-0', 'translate-y-2');
+        el.classList.add('opacity-100', 'translate-y-0');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          el.classList.add('opacity-0', 'translate-y-2');
+          el.classList.remove('opacity-100', 'translate-y-0');
+        }, 2400);
+      }
+
+      // Copy text helper with fallback
+      function copyText(text, successMsg) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => showToast(successMsg)).catch(() => fallbackCopy(text, successMsg));
+        } else {
+          fallbackCopy(text, successMsg);
+        }
+      }
+      function fallbackCopy(text, successMsg) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+          document.execCommand('copy');
+          showToast(successMsg);
+        } catch (e) {
+          showToast('Could not copy to clipboard');
+        }
+        document.body.removeChild(ta);
+      }
+
+      // Initialize Leaflet Map
+      const map = L.map('map', {
+        center: [PUNE_CENTER.lat, PUNE_CENTER.lng],
+        zoom: 12,
+        zoomControl: false
+      });
+
+      let currentTileLayer = L.tileLayer(TILE_LAYERS.street.url, {
+        attribution: TILE_LAYERS.street.attribution,
+        maxZoom: 18
+      }).addTo(map);
+
+      let radiusCircle = null;
+      const markerMap = new Map();
+
+      function getFilteredArticles() {
+        const q = state.searchQuery.trim().toLowerCase();
+        return state.articles.filter(a => {
+          if (state.activeCategory !== 'All' && a.category !== state.activeCategory) return false;
+          if (state.radiusKm > 0) {
+            const dist = distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, a.lat, a.lng);
+            if (dist > state.radiusKm) return false;
+          }
+          if (q) {
+            const hay = (a.title + ' ' + a.location + ' ' + a.category + ' ' + a.summary + ' ' + a.sourceName).toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+      }
+
+      function createPinIcon(article, isActive) {
+        const meta = CATEGORY_META[article.category] || CATEGORY_META.Community;
+        const letter = article.category.charAt(0).toUpperCase();
+        const pulseHtml = isActive ? `<div class="pin-pulse" style="color:${meta.color}"></div>` : '';
+        return L.divIcon({
+          className: 'news-pin-wrapper',
+          html: `<div class="news-pin ${isActive ? 'active' : ''}" style="background:${meta.color};">${pulseHtml}<div class="news-pin-inner">${letter}</div></div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 36]
+        });
+      }
+
+      function renderMapMarkers(filtered) {
+        // Leaflet markers
+        markerMap.forEach(m => map.removeLayer(m));
+        markerMap.clear();
+
+        filtered.forEach(article => {
+          const isActive = state.selectedArticleId === article.id;
+          const marker = L.marker([article.lat, article.lng], {
+            icon: createPinIcon(article, isActive),
+            zIndexOffset: isActive ? 1000 : 0
+          }).addTo(map);
+
+          marker.bindTooltip(
+            `<div class="text-xs font-semibold text-slate-900">${escapeHtml(article.location)}</div><div class="text-[11px] text-slate-600 max-w-[180px] truncate">${escapeHtml(article.title)}</div>`,
+            { direction: 'top', offset: [0, -34], opacity: 0.96 }
+          );
+
+          marker.on('click', () => {
+            if (state.isPickingLocation) return;
+            selectArticle(article.id, true);
+          });
+          markerMap.set(article.id, marker);
+        });
+
+        // Radius circle
+        if (radiusCircle) {
+          map.removeLayer(radiusCircle);
+          radiusCircle = null;
+        }
+        if (state.radiusKm > 0) {
+          radiusCircle = L.circle([PUNE_CENTER.lat, PUNE_CENTER.lng], {
+            radius: state.radiusKm * 1000,
+            color: '#2563eb',
+            weight: 2,
+            dashArray: '6, 6',
+            fillColor: '#3b82f6',
+            fillOpacity: 0.08
+          }).addTo(map);
+        }
+
+
+      }
+
+      function renderCategoryChips() {
+        const container = document.getElementById('category-chips');
+        const categories = Object.keys(CATEGORY_META);
+        const counts = { All: state.articles.length };
+        state.articles.forEach(a => {
+          counts[a.category] = (counts[a.category] || 0) + 1;
+        });
+
+        container.innerHTML = categories.map(cat => {
+          const count = counts[cat] || 0;
+          if (cat !== 'All' && count === 0) return '';
+          const active = state.activeCategory === cat;
+          const meta = CATEGORY_META[cat];
+          return `
+            <button data-cat="${cat}" type="button" class="cat-chip shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm border transition flex items-center gap-1.5 ${
+              active
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-white/95 text-slate-700 border-slate-200 hover:bg-slate-50'
+            }">
+              <span class="w-2 h-2 rounded-full shrink-0" style="background:${meta.color}"></span>
+              <span>${cat}</span>
+              <span class="${active ? 'text-slate-300' : 'text-slate-400'} font-normal">${count}</span>
+            </button>
+          `;
+        }).join('');
+      }
+
+      function renderCarousel(filtered) {
+        const container = document.getElementById('bottom-carousel');
+        if (filtered.length === 0) {
+          container.innerHTML = `
+            <div class="w-full max-w-md mx-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-lg border border-slate-200 p-4 text-center">
+              <p class="text-xs font-semibold text-slate-700">No news pins match your current filter</p>
+              <button id="btn-reset-filters-inline" type="button" class="mt-2 text-xs font-semibold text-blue-600 hover:underline">Reset filters</button>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = filtered.map(a => {
+          const meta = CATEGORY_META[a.category] || CATEGORY_META.Community;
+          const dist = distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, a.lat, a.lng).toFixed(1);
+          const isSaved = state.savedIds.has(a.id);
+          return `
+            <article data-open-id="${a.id}" class="snap-start shrink-0 w-72 bg-white/95 backdrop-blur-md rounded-2xl shadow-lg border border-slate-200/90 p-3.5 cursor-pointer hover:border-blue-300 transition">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${meta.soft}">
+                  <span class="w-1.5 h-1.5 rounded-full" style="background:${meta.color}"></span>
+                  ${escapeHtml(a.category)}
+                </span>
+                <span class="text-[11px] text-slate-400 font-medium">${dist} km · ${escapeHtml(a.date)}</span>
+              </div>
+              <h3 class="text-xs font-bold text-slate-900 line-clamp-2 leading-snug mb-1.5">${escapeHtml(a.title)}</h3>
+              <div class="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                <span class="truncate flex items-center gap-1">
+                  <i data-lucide="map-pin" class="w-3 h-3 text-slate-400 shrink-0"></i>
+                  ${escapeHtml(a.location)}
+                </span>
+                <button data-save-id="${a.id}" type="button" class="p-1 rounded-full hover:bg-slate-100 ${isSaved ? 'text-rose-600' : 'text-slate-400'}" aria-label="Bookmark story">
+                  <i data-lucide="bookmark" class="w-3.5 h-3.5 ${isSaved ? 'fill-current' : ''}"></i>
+                </button>
+              </div>
+            </article>
+          `;
+        }).join('');
+      }
+
+      function renderArticleSheet() {
+        const sheet = document.getElementById('article-sheet');
+        const body = document.getElementById('article-sheet-body');
+        const carouselWrap = document.getElementById('bottom-carousel-wrap');
+        const article = state.articles.find(a => a.id === state.selectedArticleId);
+
+        if (!article) {
+          sheet.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+          carouselWrap.classList.remove('hidden');
+          return;
+        }
+
+        carouselWrap.classList.add('hidden');
+        const meta = CATEGORY_META[article.category] || CATEGORY_META.Community;
+        const dist = distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, article.lat, article.lng).toFixed(1);
+        const isSaved = state.savedIds.has(article.id);
+        const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${article.lat},${article.lng}`;
+
+        body.innerHTML = `
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border ${meta.soft}">
+                <span class="w-2 h-2 rounded-full" style="background:${meta.color}"></span>
+                ${escapeHtml(article.category)}
+              </span>
+              <span class="text-xs text-slate-500 font-medium">${escapeHtml(article.date)}</span>
+              ${article.isUserSubmitted ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">User Pinned</span>' : ''}
+            </div>
+            <button id="btn-close-sheet" type="button" class="p-1.5 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 shrink-0" aria-label="Close details">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+
+          <h2 class="text-base font-bold text-slate-900 mt-2.5 leading-snug">${escapeHtml(article.title)}</h2>
+
+          <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600">
+            <span class="inline-flex items-center gap-1 font-medium text-slate-700">
+              <i data-lucide="map-pin" class="w-3.5 h-3.5 text-blue-600"></i>
+              ${escapeHtml(article.location)}
+            </span>
+            <span class="text-slate-400">·</span>
+            <span class="font-mono text-[11px] text-slate-500">${article.lat.toFixed(4)}, ${article.lng.toFixed(4)}</span>
+            <span class="text-slate-400">·</span>
+            <span>${dist} km from center</span>
+          </div>
+
+          <p class="mt-3 text-sm text-slate-700 leading-relaxed">${escapeHtml(article.summary)}</p>
+
+          <div class="mt-3 text-xs text-slate-500">
+            Source: <span class="font-semibold text-slate-700">${escapeHtml(article.sourceName)}</span>
+          </div>
+
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <a href="${gmapsUrl}" target="_blank" rel="noopener noreferrer" class="py-2.5 px-3 rounded-xl bg-blue-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-blue-700 transition shadow-sm">
+              <i data-lucide="navigation" class="w-3.5 h-3.5"></i>
+              Open in Google Maps
+            </a>
+            ${article.sourceUrl ? `
+              <a href="${escapeHtml(article.sourceUrl)}" target="_blank" rel="noopener noreferrer" class="py-2.5 px-3 rounded-xl bg-slate-100 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-200 transition">
+                <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                Read Full Source
+              </a>
+            ` : `
+              <button id="btn-copy-story" type="button" class="py-2.5 px-3 rounded-xl bg-slate-100 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-200 transition">
+                <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+                Copy Details
+              </button>
+            `}
+          </div>
+
+          <div class="mt-2.5 flex items-center gap-2">
+            <button data-save-id="${article.id}" type="button" class="flex-1 py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+              isSaved ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+            }">
+              <i data-lucide="bookmark" class="w-3.5 h-3.5 ${isSaved ? 'fill-current' : ''}"></i>
+              ${isSaved ? 'Saved' : 'Save Story'}
+            </button>
+            <button id="btn-share-coords" type="button" class="flex-1 py-2 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-slate-50 transition">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              Copy Pin Link
+            </button>
+          </div>
+        `;
+
+        sheet.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+        lucide.createIcons();
+
+        document.getElementById('btn-close-sheet').addEventListener('click', () => {
+          state.selectedArticleId = null;
+          renderAll();
+        });
+        const shareBtn = document.getElementById('btn-share-coords');
+        if (shareBtn) {
+          shareBtn.addEventListener('click', () => {
+            copyText(`${article.title} — ${article.location} (${gmapsUrl})`, 'Story & map link copied');
+          });
+        }
+        const copyStoryBtn = document.getElementById('btn-copy-story');
+        if (copyStoryBtn) {
+          copyStoryBtn.addEventListener('click', () => {
+            copyText(`${article.title} (${article.location}): ${article.summary}`, 'Story details copied');
+          });
+        }
+      }
+
+      function renderFeed(filtered) {
+        const list = document.getElementById('feed-list');
+        const subtitle = document.getElementById('feed-subtitle');
+        subtitle.textContent = `${filtered.length} location-tagged ${filtered.length === 1 ? 'story' : 'stories'} ${state.activeCategory !== 'All' ? 'in ' + state.activeCategory : 'across Pune'}`;
+
+        const sorted = [...filtered].sort((a, b) => {
+          if (state.feedSort === 'nearest') {
+            return distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, a.lat, a.lng) -
+                   distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, b.lat, b.lng);
+          }
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        });
+
+        if (sorted.length === 0) {
+          list.innerHTML = `
+            <div class="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+              <p class="text-sm font-semibold text-slate-700">No matching news stories</p>
+              <p class="text-xs text-slate-500 mt-1">Try clearing your search or widening the radius filter.</p>
+              <button id="btn-reset-feed" type="button" class="mt-3 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold">Reset Filters</button>
+            </div>
+          `;
+          return;
+        }
+
+        list.innerHTML = sorted.map(a => buildListCard(a)).join('');
+      }
+
+      function renderSaved() {
+        const list = document.getElementById('saved-list');
+        const badge = document.getElementById('saved-nav-badge');
+        const clearBtn = document.getElementById('btn-clear-saved');
+        const savedArticles = state.articles.filter(a => state.savedIds.has(a.id));
+
+        if (savedArticles.length > 0) {
+          badge.textContent = savedArticles.length;
+          badge.classList.remove('hidden');
+          clearBtn.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+          clearBtn.classList.add('hidden');
+        }
+
+        if (savedArticles.length === 0) {
+          list.innerHTML = `
+            <div class="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+              <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
+                <i data-lucide="bookmark" class="w-6 h-6"></i>
+              </div>
+              <p class="text-sm font-semibold text-slate-800">No saved stories yet</p>
+              <p class="text-xs text-slate-500 mt-1">Tap the bookmark icon on any map pin or feed card to save it here.</p>
+            </div>
+          `;
+          return;
+        }
+
+        list.innerHTML = savedArticles.map(a => buildListCard(a)).join('');
+      }
+
+      function buildListCard(a) {
+        const meta = CATEGORY_META[a.category] || CATEGORY_META.Community;
+        const dist = distanceKm(PUNE_CENTER.lat, PUNE_CENTER.lng, a.lat, a.lng).toFixed(1);
+        const isSaved = state.savedIds.has(a.id);
+        return `
+          <article class="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm hover:border-blue-300 transition">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <span class="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${meta.soft}">
+                <span class="w-1.5 h-1.5 rounded-full" style="background:${meta.color}"></span>
+                ${escapeHtml(a.category)}
+              </span>
+              <span class="text-[11px] text-slate-400 font-medium">${dist} km · ${escapeHtml(a.date)}</span>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900 leading-snug">${escapeHtml(a.title)}</h3>
+            <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">${escapeHtml(a.summary)}</p>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+              <span class="text-xs font-medium text-slate-600 truncate flex items-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5 text-blue-600 shrink-0"></i>
+                ${escapeHtml(a.location)}
+              </span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button data-save-id="${a.id}" type="button" class="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 ${isSaved ? 'text-rose-600 bg-rose-50 border-rose-200' : 'text-slate-500'}" aria-label="Toggle save">
+                  <i data-lucide="bookmark" class="w-3.5 h-3.5 ${isSaved ? 'fill-current' : ''}"></i>
+                </button>
+                <button data-locate-id="${a.id}" type="button" class="px-3 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 flex items-center gap-1">
+                  <i data-lucide="map" class="w-3.5 h-3.5"></i>
+                  Locate
+                </button>
+              </div>
+            </div>
+          </article>
+        `;
+      }
+
+      function renderSettingsUI() {
+        document.querySelectorAll('.setting-layer-btn').forEach(btn => {
+          const active = btn.dataset.settingLayer === state.mapLayer;
+          btn.className = `setting-layer-btn py-2.5 px-3 rounded-xl border text-xs font-semibold flex flex-col items-center gap-1.5 transition ${
+            active ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`;
+        });
+        document.querySelectorAll('.radius-opt-btn').forEach(btn => {
+          const active = Number(btn.dataset.radius) === state.radiusKm;
+          btn.className = `radius-opt-btn py-2 rounded-xl border text-xs font-semibold transition ${
+            active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`;
+        });
+        document.getElementById('radius-fab-label').textContent = state.radiusKm === 0 ? 'All' : `${state.radiusKm}k`;
+
+        document.querySelectorAll('.layer-opt').forEach(btn => {
+          const check = btn.querySelector('.layer-check');
+          if (btn.dataset.layer === state.mapLayer) {
+            check.classList.remove('hidden');
+          } else {
+            check.classList.add('hidden');
+          }
+        });
+      }
+
+      function renderAll() {
+        const filtered = getFilteredArticles();
+        document.getElementById('pin-count-badge').textContent = `${filtered.length} ${filtered.length === 1 ? 'pin' : 'pins'}`;
+        renderCategoryChips();
+        renderMapMarkers(filtered);
+        renderCarousel(filtered);
+        renderArticleSheet();
+        renderFeed(filtered);
+        renderSaved();
+        renderSettingsUI();
+        lucide.createIcons();
+      }
+
+      function selectArticle(id, flyToPin) {
+        state.selectedArticleId = id;
+        const article = state.articles.find(a => a.id === id);
+        if (article && flyToPin) {
+          map.flyTo([article.lat - 0.008, article.lng], 14, { duration: 0.65 });
+        }
+        renderAll();
+      }
+
+      function setMapLayer(layerKey) {
+        if (!TILE_LAYERS[layerKey]) return;
+        state.mapLayer = layerKey;
+        map.removeLayer(currentTileLayer);
+        currentTileLayer = L.tileLayer(TILE_LAYERS[layerKey].url, {
+          attribution: TILE_LAYERS[layerKey].attribution,
+          maxZoom: 18
+        }).addTo(map);
+
+        renderSettingsUI();
+        showToast(`Switched to ${layerKey} map`);
+      }
+
+      function switchTab(tab) {
+        state.activeTab = tab;
+        const views = {
+          map: document.getElementById('view-map'),
+          feed: document.getElementById('view-feed'),
+          saved: document.getElementById('view-saved'),
+          settings: document.getElementById('view-settings')
+        };
+        Object.keys(views).forEach(k => {
+          views[k].classList.toggle('hidden', k !== tab);
+        });
+        document.getElementById('map-overlay-header').classList.toggle('hidden', tab !== 'map');
+        document.getElementById('layer-popover').classList.add('hidden');
+
+        document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+          const active = btn.dataset.tab === tab;
+          btn.classList.toggle('text-blue-600', active);
+          btn.classList.toggle('font-semibold', active);
+          btn.classList.toggle('text-slate-500', !active);
+          btn.classList.toggle('font-medium', !active);
+        });
+
+        if (tab === 'map') {
+          setTimeout(() => map.invalidateSize(), 60);
+        }
+      }
+
+      function toggleSave(id) {
+        if (state.savedIds.has(id)) {
+          state.savedIds.delete(id);
+          showToast('Removed from Saved');
+        } else {
+          state.savedIds.add(id);
+          showToast('Saved story to bookmarks');
+        }
+        persistSaved();
+        renderAll();
+      }
+
+      function resetFilters() {
+        state.activeCategory = 'All';
+        state.searchQuery = '';
+        state.radiusKm = 0;
+        document.getElementById('search-input').value = '';
+        document.getElementById('clear-search-btn').classList.add('hidden');
+        renderAll();
+        showToast('Filters reset');
+      }
+
+      // EVENT LISTENERS
+      const searchInput = document.getElementById('search-input');
+      const clearSearchBtn = document.getElementById('clear-search-btn');
+      searchInput.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        clearSearchBtn.classList.toggle('hidden', !state.searchQuery);
+        renderAll();
+      });
+      clearSearchBtn.addEventListener('click', () => {
+        state.searchQuery = '';
+        searchInput.value = '';
+        clearSearchBtn.classList.add('hidden');
+        renderAll();
+      });
+
+      // Delegated clicks for categories, cards, bookmarks, locate
+      document.getElementById('category-chips').addEventListener('click', (e) => {
+        const chip = e.target.closest('.cat-chip');
+        if (!chip) return;
+        state.activeCategory = chip.dataset.cat;
+        state.selectedArticleId = null;
+        renderAll();
+      });
+
+      document.getElementById('app-shell').addEventListener('click', (e) => {
+        const saveBtn = e.target.closest('[data-save-id]');
+        if (saveBtn) {
+          e.stopPropagation();
+          toggleSave(saveBtn.dataset.saveId);
+          return;
+        }
+        const locateBtn = e.target.closest('[data-locate-id]');
+        if (locateBtn) {
+          e.stopPropagation();
+          switchTab('map');
+          selectArticle(locateBtn.dataset.locateId, true);
+          return;
+        }
+        const openCard = e.target.closest('[data-open-id]');
+        if (openCard) {
+          selectArticle(openCard.dataset.openId, true);
+          return;
+        }
+        if (e.target.id === 'btn-reset-filters-inline' || e.target.id === 'btn-reset-feed') {
+          resetFilters();
+        }
+      });
+
+      // Bottom Nav Tabs
+      document.querySelectorAll('.nav-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      });
+
+      // Floating Map Controls
+      document.getElementById('btn-layers').addEventListener('click', () => {
+        document.getElementById('layer-popover').classList.toggle('hidden');
+      });
+      document.querySelectorAll('.layer-opt').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setMapLayer(btn.dataset.layer);
+          document.getElementById('layer-popover').classList.add('hidden');
+        });
+      });
+
+      const RADIUS_CYCLE = [0, 5, 10, 20];
+      document.getElementById('btn-radius').addEventListener('click', () => {
+        const nextIdx = (RADIUS_CYCLE.indexOf(state.radiusKm) + 1) % RADIUS_CYCLE.length;
+        state.radiusKm = RADIUS_CYCLE[nextIdx];
+        renderAll();
+        showToast(state.radiusKm === 0 ? 'Showing all Pune stories' : `Filtering within ${state.radiusKm} km of center`);
+      });
+
+      document.getElementById('btn-recenter').addEventListener('click', () => {
+        state.selectedArticleId = null;
+        map.flyTo([PUNE_CENTER.lat, PUNE_CENTER.lng], 12, { duration: 0.65 });
+        renderAll();
+        showToast('Centered on Pune');
+      });
+
+      // Feed sort & clear saved
+      document.getElementById('feed-sort').addEventListener('change', (e) => {
+        state.feedSort = e.target.value;
+        renderFeed(getFilteredArticles());
+        lucide.createIcons();
+      });
+
+      document.getElementById('btn-clear-saved').addEventListener('click', () => {
+        state.savedIds.clear();
+        persistSaved();
+        renderAll();
+        showToast('Cleared all saved stories');
+      });
+
+      // Settings Controls
+      document.querySelectorAll('.setting-layer-btn').forEach(btn => {
+        btn.addEventListener('click', () => setMapLayer(btn.dataset.settingLayer));
+      });
+      document.querySelectorAll('.radius-opt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          state.radiusKm = Number(btn.dataset.radius);
+          renderAll();
+          showToast(state.radiusKm === 0 ? 'Showing all stories' : `Radius set to ${state.radiusKm} km`);
+        });
+      });
+
+      const toggleFrameBtn = document.getElementById('toggle-frame-btn');
+      const toggleFrameKnob = document.getElementById('toggle-frame-knob');
+      toggleFrameBtn.addEventListener('click', () => {
+        state.mobileFrame = !state.mobileFrame;
+        document.getElementById('app-shell').classList.toggle('mobile-frame', state.mobileFrame);
+        toggleFrameBtn.setAttribute('aria-checked', String(state.mobileFrame));
+        toggleFrameBtn.classList.toggle('bg-blue-600', state.mobileFrame);
+        toggleFrameBtn.classList.toggle('bg-slate-200', !state.mobileFrame);
+        toggleFrameKnob.classList.toggle('translate-x-5', state.mobileFrame);
+        toggleFrameKnob.classList.toggle('translate-x-0.5', !state.mobileFrame);
+        setTimeout(() => map.invalidateSize(), 280);
+      });
+
+      // Export GeoJSON & Reset Feed
+      document.getElementById('btn-export-geojson').addEventListener('click', () => {
+        const geojson = {
+          type: 'FeatureCollection',
+          features: state.articles.map(a => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
+            properties: { title: a.title, location: a.location, category: a.category, date: a.date, source: a.sourceName }
+          }))
+        };
+        copyText(JSON.stringify(geojson, null, 2), 'Copied GeoJSON for all pins');
+      });
+
+      document.getElementById('btn-reset-demo').addEventListener('click', () => {
+        state.articles = [...INITIAL_ARTICLES];
+        state.selectedArticleId = null;
+        resetFilters();
+        showToast('Restored default Pune news feed');
+      });
+
+      // Add / Pin Local News Modal & Map Tap Picker
+      const addModal = document.getElementById('add-news-modal');
+      const pickBanner = document.getElementById('pick-mode-banner');
+
+      function openAddModal() {
+        addModal.classList.remove('hidden');
+        state.isPickingLocation = false;
+        pickBanner.classList.add('hidden');
+      }
+      function closeAddModal() {
+        addModal.classList.add('hidden');
+      }
+
+      document.getElementById('btn-open-add').addEventListener('click', openAddModal);
+      document.getElementById('close-add-modal').addEventListener('click', closeAddModal);
+      document.getElementById('cancel-add-modal').addEventListener('click', closeAddModal);
+
+      document.getElementById('btn-pick-on-map').addEventListener('click', () => {
+        closeAddModal();
+        switchTab('map');
+        state.isPickingLocation = true;
+        state.selectedArticleId = null;
+        renderArticleSheet();
+        pickBanner.classList.remove('hidden');
+        showToast('Tap anywhere on the map to place your pin');
+      });
+
+      document.getElementById('cancel-pick-btn').addEventListener('click', () => {
+        state.isPickingLocation = false;
+        pickBanner.classList.add('hidden');
+        openAddModal();
+      });
+
+      map.on('click', (e) => {
+        document.getElementById('layer-popover').classList.add('hidden');
+        if (state.isPickingLocation) {
+          document.getElementById('new-lat').value = e.latlng.lat.toFixed(4);
+          document.getElementById('new-lng').value = e.latlng.lng.toFixed(4);
+          state.isPickingLocation = false;
+          pickBanner.classList.add('hidden');
+          openAddModal();
+          showToast('Location coordinates captured');
+        } else if (state.selectedArticleId) {
+          state.selectedArticleId = null;
+          renderAll();
+        }
+      });
+
+      document.getElementById('add-news-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const title = document.getElementById('new-title').value.trim();
+        const location = document.getElementById('new-location').value.trim();
+        const category = document.getElementById('new-category').value;
+        const lat = parseFloat(document.getElementById('new-lat').value);
+        const lng = parseFloat(document.getElementById('new-lng').value);
+        const summary = document.getElementById('new-summary').value.trim();
+
+        if (!title || !location || isNaN(lat) || isNaN(lng) || !summary) {
+          showToast('Please complete all fields');
+          return;
+        }
+
+        const newArticle = {
+          id: 'u_' + Date.now(),
+          title,
+          location,
+          lat,
+          lng,
+          category,
+          date: 'Just now',
+          timestamp: Date.now(),
+          sourceName: 'Community Report',
+          sourceUrl: '',
+          summary,
+          isUserSubmitted: true
+        };
+
+        state.articles.unshift(newArticle);
+        state.activeCategory = 'All';
+        closeAddModal();
+        e.target.reset();
+        document.getElementById('new-lat').value = PUNE_CENTER.lat.toFixed(4);
+        document.getElementById('new-lng').value = PUNE_CENTER.lng.toFixed(4);
+        switchTab('map');
+        selectArticle(newArticle.id, true);
+        showToast('New location-tagged news pinned!');
+      });
+
+      // Initial render
+      renderAll();
+      setTimeout(() => map.invalidateSize(), 150);
+    })();
+  </script>
+</body>
+</html>
